@@ -5,7 +5,6 @@ import torch
 import torch.nn as nn
 import transformers
 
-#from gptq import GPTQ
 from method import QuantMethod
 from vector_balance import quantize_weight_vecbal 
 
@@ -46,4 +45,3 @@ class Balance(QuantMethod):
         # print('time %.2f' % (time.time() - tick))
         self.time = time.time() - tick
         self.error_compute(w, quant_w)
-

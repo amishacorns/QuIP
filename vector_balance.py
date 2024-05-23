@@ -129,7 +129,6 @@ def round_allbal_block(
         w_hat.copy_(wr)
         
     wr_counts = check_nbits(wr, nbits)
-    # print(f"m:{m}, d:{d}")
     if calc_entropy:
         calc_entropy(wr_counts)
     return wr
@@ -334,7 +333,6 @@ def round_ldl_admm(
     w in R^{m,d}
     d: input_shape, m: output_shape
     """
-    # assert (not unbiased) or (n_greedy_passes == 0), "greedy passes are incompatible with unbiased LDL rounding"
     (d, d_) = H.shape
     assert (d == d_)
     (m, d) = w.shape
@@ -402,20 +400,8 @@ def round_ldl_gptqequiv(
         eta = 0.5 * torch.ones(w.shape).to(w.device)
     w_hat = w.clone()
     for i in range(d):
-        #w_hat[:,i] = torch.clamp(torch.floor(w[:,i] + (w - w_hat) @ L[:,i] + eta[:,i]), min=0, max=2**nbits-1)
         # optimized version
         w_hat[:,i] = torch.clamp(torch.floor(w[:,i] + (w[:,:i+1] - w_hat[:,:i+1]) @ L[:i+1,i] + eta[:,i]), min=0, max=2**nbits-1)
-
-    # reverse order
-    # L = torch.linalg.cholesky(H)
-    # L = L @ torch.diag(1/torch.diag(L))
-    # if unbiased:
-    #     eta = torch.rand(w.shape).to(w.device)
-    # else:
-    #     eta = 0.5 * torch.ones(w.shape).to(w.device)
-    # w_hat = w.clone()
-    # for i in reversed(range(d)):
-    #     w_hat[:,i] = torch.clamp(torch.floor(w[:,i] + (w[:,i:] - w_hat[:,i:]) @ L[i:,i] + eta[:,i]), min=0, max=2**nbits-1)
 
     wr = w_hat
     wr_counts = check_nbits(wr, nbits)

@@ -3,7 +3,6 @@ import time
 import numpy as np
 import torch
 import torch.nn as nn
-# import quant
 
 from gptq import GPTQ
 from texttable import Texttable

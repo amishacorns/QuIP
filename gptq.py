@@ -37,13 +37,6 @@ class GPTQ(QuantMethod):
             H = self.H.data.clone()
         else:
             H = self.H
-        # note: removed and put in QuantMethod
-        # dead = torch.diag(H) == 0
-        # H[dead, dead] = 1
-        # W[:, dead] = 0
-        # damp = percdamp * torch.mean(torch.diag(H))
-        # diag = torch.arange(self.columns, device=self.dev)
-        # H[diag, diag] += damp
 
         Losses = torch.zeros_like(W)
         Q = torch.zeros_like(W)
@@ -74,9 +67,6 @@ class GPTQ(QuantMethod):
                                                    weight=True)
 
                 q = self.quantizer.quantize(w.unsqueeze(1)).flatten()
-                # q = quantize(w.unsqueeze(1), self.quantizer.scale,
-                #              self.quantizer.zero,
-                #              self.quantizer.maxq).flatten()
                 Q1[:, i] = q
                 Losses1[:, i] = (w - q)**2 / d**2
 
@@ -96,8 +86,6 @@ class GPTQ(QuantMethod):
                 print(torch.sum(Losses))
 
         torch.cuda.synchronize()
-        # print('time %.2f' % (time.time() - tick))
-        # print('error', torch.sum(Losses).item())
         self.time = time.time() - tick
 
         if isinstance(self.layer, transformers.Conv1D):
@@ -113,4 +101,3 @@ class GPTQ(QuantMethod):
         # to preserve H for saveH
         if not copy_H:
             del self.H
-
