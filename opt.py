@@ -143,14 +143,11 @@ def opt_sequential(model, dataloader, dev, args):
                             attention_mask=attention_mask)[0]
         for h in handles:
             h.remove()
-        # (H / nsamples).to(torch.float32)
         for name in subset:
             quant_method[name].post_batch()
 
         # Quantize Weights
         for name in subset:
-            # print(i, name)
-            # print('Quantizing ...')
             quant_method[name].preproc(
                                 preproc_gptqH=args.pre_gptqH, percdamp=args.percdamp,
                                 preproc_rescale=args.pre_rescale, 
@@ -401,11 +398,6 @@ if __name__ == '__main__':
                         default='',
                         help='Load quantized model.')
     parser.add_argument(
-        '--check',
-        action='store_true',
-        help=
-        'Whether to compute perplexity during benchmarking for verification.')
-    parser.add_argument(
         '--proxy_only',
         action='store_true',
         help=
@@ -422,9 +414,14 @@ if __name__ == '__main__':
         '--lazy_batch',
         action='store_true',
         help='lazy batch updates in blocks as used in OPTQ')
+    parser.add_argument('--device',
+                        type=str,
+                        default='cuda:0',
+                        help='device to use')
 
     args = parser.parse_args()
-    # defaults to incoherence processing
+    device = torch.device(args.device)
+
     if args.incoh_processing:
         args.pre_gptqH   = True
         args.pre_rescale = True
@@ -455,7 +452,7 @@ if __name__ == '__main__':
                 print(f"LDL NOTE: unbiased + {args.npasses} npasses. NOT TRULY UNBIASED.")
 
             tick = time.time()
-            quantizers, errors = opt_sequential(model, dataloader, DEV, args)
+            quantizers, errors = opt_sequential(model, dataloader, device, args)
             print(f'Total quant + H time elapsed: {time.time() - tick:.2f}s\n')
             print(f'Proxy Summary: Qmethod:{args.quant}, Unbiased: {args.unbiased}, W:{args.wbits}, NPass:{args.npasses}')
             print('Quantization done.\n')
@@ -470,5 +467,4 @@ if __name__ == '__main__':
                                                 model=args.model,
                                                 seqlen=model.seqlen)
             print(dataset)
-            opt_eval(model, testloader, DEV)
-
+            opt_eval(model, testloader, device)

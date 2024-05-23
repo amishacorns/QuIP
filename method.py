@@ -1,5 +1,4 @@
 import math
-import time
 
 import torch
 import torch.nn as nn
@@ -8,8 +7,6 @@ import transformers
 import primefac
 import scipy
 import math
-
-from quant import Quantizer
 
 DEBUG = False
 
@@ -167,9 +164,6 @@ class QuantMethod:
             elif preproc_proj_extra == 2:
                 U = rand_ortho_butterfly_nopermute(w.shape[0]).to(torch.float32).to(w.device)
                 V = rand_ortho_butterfly_nopermute(w.shape[1]).to(torch.float32).to(w.device)
-            #EH = torch.linalg.eigh(H)
-            #H = (EH.eigenvectors @ torch.diag(EH.eigenvalues.relu() * H.shape[0] / (EH.eigenvalues.relu().sum() + 1e-8) + 1e-2) @ EH.eigenvectors.T).to(w.device)
-            #H = H.to(torch.float32)
             H = H * (H.shape[0] / (torch.trace(H) + 1e-8)) + 1e-2 * torch.eye(H.shape[0], device=w.device)
             H = H.to(torch.float32)
             w = U @ w @ V.T
