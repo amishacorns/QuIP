@@ -103,30 +103,38 @@ def opt_sequential(model, dataloader, dev, args):
                 quant_method[name].quantizer = Quantizer()
                 quant_method[name].quantizer.configure(args.wbits,
                                                perchannel=True,
-                                               sym=False,
+                                               sym=args.sym,
                                                qfn=args.qfn,
-                                               mse=False)
+                                               mse=args.mse,
+                                               lookup_values=args.lookup_values,
+                                               group_size=args.group_size)
             elif args.quant == 'nearest':
                 quant_method[name] = Nearest(subset[name])
                 quant_method[name].quantizer = Quantizer()
                 quant_method[name].quantizer.configure(args.wbits,
                                                perchannel=True,
-                                               sym=False,
+                                               sym=args.sym,
                                                qfn=args.qfn,
-                                               mse=False)
+                                               mse=args.mse,
+                                               lookup_values=args.lookup_values,
+                                               group_size=args.group_size)
             elif args.quant in ['allbal','ldlq','ldlqRG','ldlbal_admm']:
                 quant_method[name] = Balance(subset[name])
                 quant_method[name].configure(
                                     args.quant,
                                     args.wbits, 
                                     args.npasses,
-                                    unbiased=args.unbiased)
+                                    unbiased=args.unbiased,
+                                    lookup_values=args.lookup_values,
+                                    group_size=args.group_size)
                 quant_method[name].quantizer = Quantizer()
                 quant_method[name].quantizer.configure(args.wbits,
                                                perchannel=True,
-                                               sym=False,
+                                               sym=args.sym,
                                                qfn=args.qfn,
-                                               mse=False)
+                                               mse=args.mse,
+                                               lookup_values=args.lookup_values,
+                                               group_size=args.group_size)
 
         def add_batch(name):
 
@@ -414,13 +422,37 @@ if __name__ == '__main__':
         '--lazy_batch',
         action='store_true',
         help='lazy batch updates in blocks as used in OPTQ')
-    parser.add_argument('--device',
-                        type=str,
-                        default='cuda:0',
-                        help='device to use')
+    parser.add_argument(
+        '--device',
+        type=str,
+        default='cuda:0',
+        help='device to use')
+    parser.add_argument(
+        '--lookup_values',
+        type=float,
+        nargs='+',
+        help='lookup values to use for quantization')
+    parser.add_argument(
+        '--sym',
+        action='store_true',
+        help='symmetric quantization')
+    parser.add_argument(
+        '--mse',
+        action='store_true',
+        help='mse search')
+    parser.add_argument(
+        '--group_size',
+        type=int,
+        default=-1,
+        help='Group size for quantization')
 
     args = parser.parse_args()
     device = torch.device(args.device)
+
+    # Check that the number of lookup_values is 2**wbits
+    if args.lookup_values is not None:
+        if len(args.lookup_values) != 2**args.wbits:
+            raise ValueError('Number of lookup values must be 2**wbits')
 
     if args.incoh_processing:
         args.pre_gptqH   = True

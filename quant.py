@@ -2,22 +2,48 @@ import torch
 import torch.nn as nn
 
 
-def quantize_qfna(x, scale, zero, maxq):
-    q = torch.clamp(torch.round(x / scale) + zero, 0, maxq)
-    return scale * (q - zero)
+def lookup_quant(x, lookup_values):
+    """
+    x: floating point tensor to be quantized
+    lookup_values: tensor of predefined constant values for look-up quantization
+    """
+    # TODO: check on efficiency of frequent transfers
+    lookup_values = lookup_values.to(x.device)
 
-def quantize_qfnb(x, scale, maxq):
+    # Expanding dimensions for broadcasting in distance calculation
+    expanded_x = x.unsqueeze(-1)
+    expanded_lookup = lookup_values.unsqueeze(0)
+
+    # Calculate the distance from each value in 'x' to each value in 'lookup_values'
+    distances = torch.abs(expanded_x - expanded_lookup)
+
+    # Get the index of the minimum distance for each value in 'x'
+    _, min_indices = torch.min(distances, dim=-1)
+    
+    # Use these indices to get the corresponding quantized values from 'lookup_values'
+    quant_x = lookup_values[min_indices]
+
+    return quant_x
+
+def quantize_qfna(x, scale, zero, maxq, lookup_values=None):
+    q = (x / scale) + zero
+    if lookup_values is not None:
+        q = lookup_quant(q, lookup_values)
+    else: 
+        q = torch.clamp(torch.round(q), 0, maxq)
+    q = scale * (q - zero)
+    return q
+
+def quantize_qfnb(x, scale, maxq, lookup_values=None):
     q = x / scale
-    q = torch.clamp(torch.round(((q+1)/2) * maxq), 0, maxq)
+    q = ((q+1)/2) * maxq
+    if lookup_values is not None:
+        q = lookup_quant(q, lookup_values)
+    else:
+        q = torch.clamp(torch.round(q), 0, maxq)
     q = (q / maxq) * 2 - 1
     q = q * scale
     return q
-
-def quantize_qfnc(x, scale, zero, maxq):
-    # for LDL vs GPTQ equivalency
-    q = torch.clamp((x / scale) + zero, 0, maxq)
-    q = torch.round(q)
-    return scale * (q - zero)
 
 class Quantizer(nn.Module):
 
@@ -35,46 +61,50 @@ class Quantizer(nn.Module):
                   mse=False,
                   norm=2.4,
                   grid=100,
-                  maxshrink=.8):
+                  maxshrink=.8,
+                  lookup_values=None,
+                  group_size=-1):
+        # TODO: Handle lookup with mse
+        assert mse == False
         self.maxq = torch.tensor(2**bits - 1)
         self.perchannel = perchannel
         self.sym = sym
         self.qfn = qfn
-        self.mse = mse
         self.norm = norm
         self.grid = grid
         self.maxshrink = maxshrink
+        self.lookup_values = lookup_values
+        if self.lookup_values is not None:
+            lookup_values = torch.tensor(lookup_values)
+            self.lookup_values = lookup_values
+        self.group_size = group_size
 
-    def find_params(self, x, weight=False):
+    def find_params(self, x, weight=False, group_size=-1):
         if self.qfn == 'a':
             self.find_params_qfna(x, weight=weight)
         elif self.qfn == 'b':
             self.find_params_qfnb(x)
-        elif self.qfn == 'c':
-            self.find_params_qfna(x, weight=weight)
+        else: 
+            raise NotImplementedError()
 
     def find_params_qfna(self, x, weight=False):
-        dev = x.device
-        self.maxq = self.maxq.to(dev)
+        assert self.perchannel
+        assert weight
 
+        self.maxq = self.maxq.to(x.device)
         shape = x.shape
-        if self.perchannel:
-            if weight:
-                x = x.flatten(1)
-            else:
-                if len(shape) == 4:
-                    x = x.permute([1, 0, 2, 3])
-                    x = x.flatten(1)
-                if len(shape) == 3:
-                    x = x.reshape((-1, shape[-1])).t()
-                if len(shape) == 2:
-                    x = x.t()
-        else:
-            x = x.flatten().unsqueeze(0)
+        x = x.flatten(1)
+        
+        if self.group_size == -1:
+            self.group_size = x.shape[1]
+        num_groups = x.shape[1] // self.group_size
+        assert num_groups * self.group_size == x.shape[1], "Group size must divide the number of columns evenly"
 
-        tmp = torch.zeros(x.shape[0], device=dev)
-        xmin = torch.minimum(x.min(1)[0], tmp)
-        xmax = torch.maximum(x.max(1)[0], tmp)
+        x = x.reshape(-1, num_groups, self.group_size)
+
+        tmp = torch.zeros((x.shape[0], num_groups), device=x.device)
+        xmin = torch.minimum(x.min(2)[0], tmp)
+        xmax = torch.maximum(x.max(2)[0], tmp)
 
         if self.sym:
             xmax = torch.maximum(torch.abs(xmin), xmax)
@@ -87,52 +117,24 @@ class Quantizer(nn.Module):
 
         self.scale = (xmax - xmin) / self.maxq
         if self.sym:
-            self.zero = torch.full_like(self.scale, (self.maxq + 1) / 2)
+            zp = (self.maxq + 1) / 2
         else:
-            self.zero = torch.round(-xmin / self.scale)
+            zp = -xmin / self.scale
+        # Round the zero-point to ensure no error when quantizing zeros
+        if self.lookup_values is not None:
+            self.zero = lookup_quant(zp, self.lookup_values)
+        else:
+            self.zero = torch.round(zp)
 
-        if self.mse:
-            best = torch.full([x.shape[0]], float('inf'), device=dev)
-            for i in range(int(self.maxshrink * self.grid)):
-                p = 1 - i / self.grid
-                xmin1 = p * xmin
-                xmax1 = p * xmax
-                scale1 = (xmax1 - xmin1) / self.maxq
-                zero1 = torch.round(-xmin1 /
-                                    scale1) if not self.sym else self.zero
-                q = quantize(x, scale1.unsqueeze(1), zero1.unsqueeze(1),
-                             self.maxq)
-                q -= x
-                q.abs_()
-                q.pow_(self.norm)
-                err = torch.sum(q, 1)
-                tmp = err < best
-                if torch.any(tmp):
-                    best[tmp] = err[tmp]
-                    self.scale[tmp] = scale1[tmp]
-                    self.zero[tmp] = zero1[tmp]
-        if not self.perchannel:
-            if weight:
-                tmp = shape[0]
-            else:
-                tmp = shape[1] if len(shape) != 3 else shape[2]
-            self.scale = self.scale.repeat(tmp)
-            self.zero = self.zero.repeat(tmp)
+        # Reshape scale and zero to match the original input shape
+        # Create the desired shape for broadcasting
+        scale_shape = [-1] + [1] * (len(shape) - 2) + [num_groups, 1]
+        self.scale = self.scale.reshape(scale_shape)
+        self.zero = self.zero.reshape(scale_shape)
 
-        if weight:
-            shape = [-1] + [1] * (len(shape) - 1)
-            self.scale = self.scale.reshape(shape)
-            self.zero = self.zero.reshape(shape)
-            return
-        if len(shape) == 4:
-            self.scale = self.scale.reshape((1, -1, 1, 1))
-            self.zero = self.zero.reshape((1, -1, 1, 1))
-        if len(shape) == 3:
-            self.scale = self.scale.reshape((1, 1, -1))
-            self.zero = self.zero.reshape((1, 1, -1))
-        if len(shape) == 2:
-            self.scale = self.scale.unsqueeze(0)
-            self.zero = self.zero.unsqueeze(0)
+        # Expand the scales and zero points to match the original shape
+        self.scale = self.scale.expand(-1, -1, self.group_size).reshape(shape)
+        self.zero = self.zero.expand(-1, -1, self.group_size).reshape(shape)
 
     def find_params_qfnb(self, x):
         dev = x.device
@@ -143,26 +145,13 @@ class Quantizer(nn.Module):
     def quantize(self, x):
         if self.qfn == 'a':
             assert self.ready()
-            return quantize_qfna(x, self.scale, self.zero, self.maxq)
+            return quantize_qfna(x, self.scale, self.zero, self.maxq, self.lookup_values)
         elif self.qfn == 'b':
             assert torch.all(self.maxq != 0)
             self.scale = 2.4 * x.square().mean().sqrt() + 1e-16
-            return quantize_qfnb(x, self.scale, self.maxq)
-        elif self.qfn == 'c':
-            # for LDL vs GPTQ equivalency, does round in same order as bal code
-            assert self.ready()
-            return quantize_qfnc(x, self.scale, self.zero, self.maxq)
+            return quantize_qfnb(x, self.scale, self.maxq, self.lookup_values)
         else:
             return NotImplementedError()
 
-    def enabled(self):
-        return self.maxq > 0
-
     def ready(self):
         return torch.all(self.scale != 0)
-
-
-try:
-    import quant_cuda
-except:
-    print('CUDA extension not installed.')
