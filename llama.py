@@ -5,7 +5,6 @@ import torch
 import torch.nn as nn
 
 from gptq import GPTQ
-from texttable import Texttable
 
 # added for integration with QuIP
 from datautils import get_loaders

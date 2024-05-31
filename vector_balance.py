@@ -1,8 +1,4 @@
-import time
 import torch
-import torch.nn as nn
-from tqdm import tqdm
-from functools import partial
 import sys
 
 def check_nbits(wr, nbits):
@@ -22,7 +18,6 @@ def calc_entropy(wr_count):
     # log(2) = 0.69... to convert from base e to bits
     print("avg bits per weight: %f" %
           (torch.special.entr(wr_dist) / 0.69314718056).sum().item())
-
 
 
 def _allonce(x, w, unbiased=False):
