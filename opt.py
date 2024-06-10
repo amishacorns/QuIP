@@ -2,6 +2,10 @@ import time
 
 import torch
 import torch.nn as nn
+import random
+import numpy as np
+import os
+
 
 from gptq import *
 from bal import Balance
@@ -328,6 +332,15 @@ def load_quant(model, checkpoint):
 
     return model
 
+def set_seed(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
 if __name__ == '__main__':
     import argparse
     from datautils import *
@@ -448,6 +461,7 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
     device = torch.device(args.device)
+    set_seed(args.seed)  # Set the seed
 
     # Check that the number of lookup_values is 2**wbits
     if args.lookup_values is not None:
@@ -459,7 +473,7 @@ if __name__ == '__main__':
         args.pre_rescale = True
         args.pre_proj    = True
         args.proj_extra  = 1
-        args.qfn         = 'b'
+        args.qfn         = 'a'
 
     if args.load:
         model = load_quant(args.model, args.load)

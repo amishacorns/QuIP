@@ -108,9 +108,7 @@ class Quantizer(nn.Module):
 
         if self.sym:
             xmax = torch.maximum(torch.abs(xmin), xmax)
-            tmp = xmin < 0
-            if torch.any(tmp):
-                xmin[tmp] = -xmax[tmp]
+            xmin = -xmax
         tmp = (xmin == 0) & (xmax == 0)
         xmin[tmp] = -1
         xmax[tmp] = +1
@@ -118,6 +116,7 @@ class Quantizer(nn.Module):
         self.scale = (xmax - xmin) / self.maxq
         if self.sym:
             zp = (self.maxq + 1) / 2
+            zp = zp.expand_as(self.scale)
         else:
             zp = -xmin / self.scale
         # Round the zero-point to ensure no error when quantizing zeros
